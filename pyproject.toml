@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fattummy"
+version = "0.1.5"
+description = "A declarative, ultra-minimalist ML framework for zero-boilerplate hardware-agnostic inference and training."
+readme = "README.md"
+license = "GPL-3.0"
+requires-python = ">=3.8"
+authors = [
+    { name = "Origin-Labs", email = "Shukladwij5@gmail.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/shukladwij5-maker/fattummy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["FatTummy"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/FatTummy",
+    "/README.md",
+]

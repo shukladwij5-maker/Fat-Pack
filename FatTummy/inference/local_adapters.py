@@ -38,16 +38,17 @@ class OllamaAdapter(LocalAdapterBase):
             raise FatTummyNetworkError("ollama_generate", original_error=str(e))
 
 class HuggingFaceAdapter(LocalAdapterBase):
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, token: str = None):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
         self.model_name = model_name
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, token=token)
         try:
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, 
-                device_map="auto", 
-                torch_dtype=torch.float16
+                model_name,
+                device_map="auto",
+                dtype=torch.float16,
+                token=token,
             )
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
@@ -64,10 +65,10 @@ class HuggingFaceAdapter(LocalAdapterBase):
                 raise FatTummyOOMError(original_error=str(e))
             raise
 
-def get_local_adapter(engine_name: str, model_name: str):
+def get_local_adapter(engine_name: str, model_name: str, token: str = None):
     if engine_name == "ollama":
         return OllamaAdapter(model_name)
     elif engine_name == "hf":
-        return HuggingFaceAdapter(model_name)
+        return HuggingFaceAdapter(model_name, token=token)
     else:
         raise ValueError(f"Unknown local engine: {engine_name}")

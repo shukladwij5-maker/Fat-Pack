@@ -4,20 +4,24 @@ from .inference.local_adapters import get_local_adapter
 from .tuning.trainer import FatTummyTrainer
 
 class FatTummyEngine:
-    def __init__(self):
+    def __init__(self, api_only=False):
         self._engine_name = None
         self._param = None
         self._data_sources = []
         self._model_type = None
         self._api_key = None
+        self._hf_token = None
+        self._action = None
+        self._dataset_modes = []
         self._temperature = 1.0
+        self._token_limit = 4096
+        self._epochs = 3
         
         self._compiled = False
         self._adapter = None
         self._model_instance = None
         
-        # Audit environment lazily
-        ensure_installed()
+        ensure_installed(api_only=api_only)
 
     def engine(self, name: str):
         """Switches context between 'mooe', 'ollama', 'hf', 'gemini', 'openai', 'anthropic'."""
@@ -45,9 +49,36 @@ class FatTummyEngine:
         self._api_key = api_key
         return self
 
+    def hf_login(self, token: str):
+        """Authenticate with HuggingFace Hub."""
+        self._hf_token = token
+        if token:
+            try:
+                from huggingface_hub import login
+                login(token=token, add_to_git_credential=False)
+                print("  HuggingFace login successful.")
+            except Exception as exc:
+                print(f"  HuggingFace login warning: {exc}")
+        return self
+
+    def action(self, name: str):
+        """Sets the user goal: make, finetune, or api."""
+        self._action = name.lower()
+        return self
+
     def temp(self, value: float):
         """Sets the temperature for generation/chat."""
         self._temperature = value
+        return self
+
+    def token_limit(self, value: int):
+        """Sets the maximum token limit for generation."""
+        self._token_limit = value
+        return self
+
+    def epochs(self, value: int):
+        """Sets the default epoch count for fine-tuning."""
+        self._epochs = value
         return self
 
     def _compile_and_initialize(self):
@@ -60,7 +91,9 @@ class FatTummyEngine:
             pass
         elif self._engine_name in ["ollama", "hf"]:
             if isinstance(self._model_type, str):
-                self._adapter = get_local_adapter(self._engine_name, self._model_type)
+                self._adapter = get_local_adapter(
+                    self._engine_name, self._model_type, token=self._hf_token
+                )
         else:
             # Native model (e.g., MOOE)
             try:
@@ -99,7 +132,10 @@ class FatTummyEngine:
 
     def chat(self):
         """Initiates an interactive chat interface in the terminal."""
-        print(f"FatTummy Chat session started. (Type 'exit' to quit) [Temp: {self._temperature}]")
+        print(
+            f"FatTummy Chat session started. (Type 'exit' to quit) "
+            f"[Temp: {self._temperature} | Token Limit: {self._token_limit}]"
+        )
         self._compile_and_initialize()
         
         while True:
@@ -114,13 +150,16 @@ class FatTummyEngine:
             except Exception as e:
                 print(f"FatTummy Error: {e}")
 
-    def finetune(self, epochs: int = 3):
+    def finetune(self, epochs: int = None):
         """Delegates to tuning trainer."""
+        if epochs is None:
+            epochs = self._epochs
+        dataset = self._data_sources[0] if len(self._data_sources) == 1 else self._data_sources
         if self._engine_name == "hf" and self._adapter:
-            trainer = FatTummyTrainer(self._adapter.model, self._data_sources, epochs=epochs)
+            trainer = FatTummyTrainer(self._adapter.model, dataset, epochs=epochs)
             trainer.finetune()
         elif self._model_instance:
-            trainer = FatTummyTrainer(self._model_instance, self._data_sources, epochs=epochs)
+            trainer = FatTummyTrainer(self._model_instance, dataset, epochs=epochs)
             trainer.finetune()
         else:
             raise ValueError("Finetuning not supported for this context (requires native model or local hf engine).")
