@@ -1,15 +1,29 @@
 """Fast wheel/sdist builder — no setuptools or hatchling required."""
 
 import hashlib
+import io
 import os
+import re
+import shutil
 import tarfile
+import time
 import zipfile
 from pathlib import Path
 
-VERSION = "0.1.5"
 NAME = "fattummy"
 PACKAGE_DIR = "FatTummy"
 SKIP_DIRS = {".git", "dist", "build", "__pycache__", ".egg-info", ".cursor"}
+
+
+def get_version() -> str:
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^\s*version\s*=\s*["\']([^"\']+)["\']', pyproject, flags=re.MULTILINE)
+    if not match:
+        raise RuntimeError("Unable to find version in pyproject.toml")
+    return match.group(1)
+
+
+VERSION = get_version()
 
 
 def _sha256(data: bytes) -> str:
@@ -85,9 +99,35 @@ def build_wheel(dist: Path) -> Path:
     return wheel_path
 
 
+def _pkg_info() -> bytes:
+    fields = [
+        "Metadata-Version: 2.1",
+        f"Name: {NAME}",
+        f"Version: {VERSION}",
+        "Summary: A declarative, ultra-minimalist ML framework for zero-boilerplate hardware-agnostic inference and training.",
+        "Author-email: Origin-Labs <Shukladwij5@gmail.com>",
+        "License: GPL-3.0",
+        "Home-page: https://github.com/shukladwij5-maker/fattummy",
+        "Classifier: Programming Language :: Python :: 3",
+        "Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+        "Classifier: Operating System :: OS Independent",
+        "Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Requires-Python: >=3.8",
+        "Description-Content-Type: text/markdown",
+        "",
+        Path("README.md").read_text(encoding="utf-8"),
+    ]
+    return "\n".join(fields).encode("utf-8")
+
+
 def build_sdist(dist: Path) -> Path:
     sdist_path = dist / f"{NAME}-{VERSION}.tar.gz"
     prefix = f"{NAME}-{VERSION}"
+
+    pkg_info = _pkg_info()
+    meta_data = {
+        f"{prefix}/PKG-INFO": pkg_info,
+    }
 
     with tarfile.open(sdist_path, "w:gz") as archive:
         for root, dirs, filenames in os.walk("."):
@@ -101,13 +141,20 @@ def build_sdist(dist: Path) -> Path:
                     continue
                 archive.add(path, arcname=f"{prefix}/{rel}")
 
+        tarinfo = tarfile.TarInfo(f"{prefix}/PKG-INFO")
+        tarinfo.size = len(pkg_info)
+        tarinfo.mtime = int(time.time())
+        archive.addfile(tarinfo, io.BytesIO(pkg_info))
+
     print(f"Built {sdist_path}")
     return sdist_path
 
 
 def main():
     dist = Path("dist")
-    dist.mkdir(exist_ok=True)
+    if dist.exists():
+        shutil.rmtree(dist)
+    dist.mkdir()
     build_wheel(dist)
     build_sdist(dist)
 

@@ -10,22 +10,7 @@ pip install fattummy
 
 **Python 3.11 or 3.12 recommended.** Python 3.14 is not yet supported by PyTorch — `import FatTummy` works, but Make Model and Fine-tune need an older Python. API Chat works on any version.
 
-## Building the package
 
-On **Python 3.14**, `python -m build` is very slow. Use the fast local builder instead:
-
-```bash
-python build_release.py
-```
-
-Or with Python 3.12: `py -3.12 -m pip install build hatchling && py -3.12 -m build`
-
-Upload to PyPI:
-
-```bash
-pip install twine
-twine upload dist/*
-```
 
 ## Test in Google Colab
 
@@ -82,11 +67,12 @@ For scripts and pipelines, disable the wizard and chain calls as before:
 import FatTummy as ft
 
 ft.build(interactive=False)
-ft.modelbuild("10B")
-ft.type(ft.MOOE)
+ft.modelbuild("tiny")
+ft.engine("mooe")
+ft.type("mooe")
 ft.data("bigcode/the-stack-v2", "bigcode/starcoderdata")
 ft.temp(0.7)
 ft.chat()
 ```
 
-The framework automatically detects if you are on a TPU or GPU, installs the correct PyTorch wheels natively, configures Hugging Face dependencies, and launches an interactive chat session.
+The framework audits optional dependencies, keeps heavyweight backends opt-in, and launches an interactive chat session.

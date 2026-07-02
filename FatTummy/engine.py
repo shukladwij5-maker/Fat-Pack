@@ -1,176 +1,296 @@
-from .installer import ensure_installed
+"""Builder-style runtime engine for FatTummy."""
+
+from __future__ import annotations
+
+from typing import Any, List, Optional
+
+from .exceptions import (
+    FatTummyAuthenticationError,
+    FatTummyConfigurationError,
+    FatTummyDependencyError,
+    FatTummyUnsupportedBackendError,
+)
 from .inference.cloud_adapters import get_cloud_adapter
-from .inference.local_adapters import get_local_adapter
+from .inference.local_adapters import HuggingFaceAdapter, get_local_adapter
+from .installer import ensure_installed
 from .tuning.trainer import FatTummyTrainer
 
+CLOUD_ENGINES = {"openai", "anthropic", "claude", "gemini", "google"}
+LOCAL_ENGINES = {"hf", "ollama"}
+NATIVE_ENGINES = {"mooe", "lion", "spacebyte"}
+SUPPORTED_ENGINES = CLOUD_ENGINES | LOCAL_ENGINES | NATIVE_ENGINES
+
+
 class FatTummyEngine:
-    def __init__(self, api_only=False):
-        self._engine_name = None
-        self._param = None
-        self._data_sources = []
-        self._model_type = None
-        self._api_key = None
-        self._hf_token = None
-        self._action = None
-        self._dataset_modes = []
+    """Mutable builder that coordinates datasets, backends, inference, and tuning."""
+
+    def __init__(self, api_only: bool = False) -> None:
+        self._engine_name: Optional[str] = None
+        self._param: Optional[str] = None
+        self._data_sources: List[Any] = []
+        self._model_type: Any = None
+        self._api_key: Optional[str] = None
+        self._hf_token: Optional[str] = None
+        self._action: Optional[str] = None
+        self._dataset_modes: List[str] = []
         self._temperature = 1.0
-        self._token_limit = 4096
+        self._token_limit = 512
         self._epochs = 3
-        
+        self._timeout = 120.0
+        self._quantization: Optional[str] = None
+
         self._compiled = False
-        self._adapter = None
-        self._model_instance = None
-        
+        self._adapter: Any = None
+        self._model_instance: Any = None
+
         ensure_installed(api_only=api_only)
 
-    def engine(self, name: str):
-        """Switches context between 'mooe', 'ollama', 'hf', 'gemini', 'openai', 'anthropic'."""
-        self._engine_name = name
+    def engine(self, name: str) -> "FatTummyEngine":
+        """Select an engine: hf, ollama, openai, anthropic, gemini, mooe, lion, or spacebyte."""
+        normalized = name.lower().strip()
+        aliases = {"huggingface": "hf", "claude": "anthropic", "google": "gemini"}
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in SUPPORTED_ENGINES:
+            supported = ", ".join(sorted(SUPPORTED_ENGINES))
+            raise FatTummyUnsupportedBackendError(f"Unknown engine '{name}'. Supported engines: {supported}.")
+        self._engine_name = normalized
+        self._compiled = False
         return self
 
-    def modelbuild(self, scale: str):
-        """Parses identifiers like '10B', '8b' into hyperparameter sets."""
+    def modelbuild(self, scale: str) -> "FatTummyEngine":
+        """Set the native model scale hint, for example 'tiny', 'small', or 'medium'."""
         self._param = scale
+        self._compiled = False
         return self
 
-    def data(self, *sources):
-        """Ingests one or more data sources (CSV, DataFrame, or HF Dataset identifier)."""
+    def data(self, *sources: Any) -> "FatTummyEngine":
+        """Register one or more dataset objects or source identifiers."""
         self._data_sources.extend(sources)
         return self
 
-    def type(self, arch):
-        """Validates model target and executes initialization compilation."""
+    def type(self, arch: Any) -> "FatTummyEngine":
+        """Set the model architecture/name and initialize lightweight backend state."""
         self._model_type = arch
+        self._compiled = False
         self._compile_and_initialize()
         return self
 
-    def key(self, api_key: str):
-        """Sets API key for cloud engines."""
+    def key(self, api_key: str) -> "FatTummyEngine":
+        """Set API key for cloud engines."""
         self._api_key = api_key
+        self._adapter = None
         return self
 
-    def hf_login(self, token: str):
-        """Authenticate with HuggingFace Hub."""
+    def hf_login(self, token: str) -> "FatTummyEngine":
+        """Store a Hugging Face token and attempt a non-fatal hub login."""
         self._hf_token = token
         if token:
             try:
                 from huggingface_hub import login
+            except ImportError:
+                print("FatTummy: huggingface_hub is not installed; token stored for later use.")
+            else:
                 login(token=token, add_to_git_credential=False)
-                print("  HuggingFace login successful.")
-            except Exception as exc:
-                print(f"  HuggingFace login warning: {exc}")
+                print("FatTummy: Hugging Face login successful.")
         return self
 
-    def action(self, name: str):
-        """Sets the user goal: make, finetune, or api."""
-        self._action = name.lower()
+    def action(self, name: str) -> "FatTummyEngine":
+        """Set the user goal: make, finetune, or api."""
+        normalized = name.lower().strip()
+        if normalized not in {"make", "finetune", "api", "chat"}:
+            raise FatTummyConfigurationError("Action must be one of: make, finetune, api, chat.")
+        self._action = normalized
         return self
 
-    def temp(self, value: float):
-        """Sets the temperature for generation/chat."""
-        self._temperature = value
+    def temp(self, value: float) -> "FatTummyEngine":
+        """Set generation temperature."""
+        if value <= 0:
+            raise FatTummyConfigurationError("Temperature must be positive.")
+        self._temperature = float(value)
         return self
 
-    def token_limit(self, value: int):
-        """Sets the maximum token limit for generation."""
-        self._token_limit = value
+    def token_limit(self, value: int) -> "FatTummyEngine":
+        """Set maximum generated token count."""
+        if value <= 0:
+            raise FatTummyConfigurationError("Token limit must be positive.")
+        self._token_limit = int(value)
         return self
 
-    def epochs(self, value: int):
-        """Sets the default epoch count for fine-tuning."""
-        self._epochs = value
+    def timeout(self, value: float) -> "FatTummyEngine":
+        """Set backend timeout in seconds."""
+        if value <= 0:
+            raise FatTummyConfigurationError("Timeout must be positive.")
+        self._timeout = float(value)
         return self
 
-    def _compile_and_initialize(self):
-        """Private backend method to initialize the selected engine context."""
+    def epochs(self, value: int) -> "FatTummyEngine":
+        """Set the default epoch count for fine-tuning."""
+        if value <= 0:
+            raise FatTummyConfigurationError("Epochs must be positive.")
+        self._epochs = int(value)
+        return self
+
+    def quantize(self, mode: str) -> "FatTummyEngine":
+        """Set the quantization mode for local Hugging Face models (e.g. '4bit' or '8bit')."""
+        self._quantization = mode
+        self._compiled = False
+        return self
+
+    def _default_engine(self) -> str:
+        """Infer a reasonable engine when the user omitted one."""
+        if self._engine_name:
+            return self._engine_name
+
+        model_type_str = ""
+        if isinstance(self._model_type, str):
+            model_type_str = self._model_type.lower()
+        elif self._model_type is not None:
+            model_type_str = getattr(self._model_type, "__name__", "").lower()
+
+        if model_type_str in {"mooe", "lion", "spacebyte"}:
+            return model_type_str
+        return "hf"
+
+    def _compile_and_initialize(self) -> None:
+        """Initialize lightweight backend state without downloading large assets."""
         if self._compiled:
             return
+        engine_name = self._default_engine()
+        self._engine_name = engine_name
+        self._validate_combination(engine_name, self._model_type)
 
-        if self._engine_name in ["openai", "anthropic", "gemini"]:
-            # Defer initialization until key is available or generate is called
-            pass
-        elif self._engine_name in ["ollama", "hf"]:
-            if isinstance(self._model_type, str):
-                self._adapter = get_local_adapter(
-                    self._engine_name, self._model_type, token=self._hf_token
-                )
+        if engine_name in LOCAL_ENGINES:
+            if not isinstance(self._model_type, str):
+                raise FatTummyConfigurationError(f"Engine '{engine_name}' requires a string model name.")
+            self._adapter = get_local_adapter(
+                engine_name,
+                self._model_type,
+                token=self._hf_token,
+                timeout=self._timeout,
+                quantization=self._quantization,
+            )
+        elif engine_name in NATIVE_ENGINES:
+            self._model_instance = self._build_native_model(engine_name)
         else:
-            # Native model (e.g., MOOE)
-            try:
-                from .models.mooe import MOOE, MOOEConfig
-                if isinstance(self._model_type, type) and issubclass(self._model_type, MOOE):
-                    hidden_size = 4096
-                    if self._param and isinstance(self._param, str):
-                        scale_lower = self._param.lower()
-                        if "1b" in scale_lower:
-                            hidden_size = 2048
-                        elif "10b" in scale_lower or "8b" in scale_lower:
-                            hidden_size = 4096
-                    
-                    config = MOOEConfig(hidden_size=hidden_size)
-                    self._model_instance = MOOE(config)
-                else:
-                    pass
-            except ImportError:
-                pass
-                
+            self._adapter = None
         self._compiled = True
 
-    def generate(self, prompt: str) -> str:
-        """Unified adapter pattern generator."""
-        # A real implementation would pass self._temperature down to the adapters.
-        if self._engine_name in ["openai", "anthropic", "gemini"]:
-            if not self._adapter:
-                if not self._api_key:
-                    raise ValueError(f"API Key required for {self._engine_name} engine.")
-                self._adapter = get_cloud_adapter(self._engine_name, self._api_key)
-            return self._adapter.generate(prompt)
-        elif self._adapter:
-            return self._adapter.generate(prompt)
-        else:
-            return f"[Generated text from native model {self._model_type} for prompt: {prompt}]"
+    def _validate_combination(self, engine_name: str, model_type: Any) -> None:
+        """Reject invalid engine/model combinations with a user-facing error."""
+        if engine_name in CLOUD_ENGINES and not (model_type is None or isinstance(model_type, str)):
+            raise FatTummyUnsupportedBackendError("Cloud engines require a provider model-name string.")
+        if engine_name == "ollama" and (not isinstance(model_type, str) or "/" in model_type):
+            raise FatTummyUnsupportedBackendError("Ollama models should use local Ollama names such as 'llama3.2'.")
+        if engine_name == "hf" and not isinstance(model_type, str):
+            raise FatTummyUnsupportedBackendError("Hugging Face engine requires a model repo/name string.")
 
-    def chat(self):
-        """Initiates an interactive chat interface in the terminal."""
+    def _build_native_model(self, engine_name: str) -> Any:
+        """Instantiate a native experimental model variant."""
+        try:
+            from .models.mooe import MOOE, MOOEConfig
+        except ImportError as exc:
+            raise FatTummyDependencyError("Native models require PyTorch. Install it with: pip install torch") from exc
+
+        scale = (self._param or "tiny").lower()
+        legacy_large_aliases = {"1b", "8b", "10b"}
+        if any(alias in scale for alias in legacy_large_aliases):
+            print(
+                "FatTummy: large scale labels are disabled in the prototype; "
+                "using the CPU-friendly 'small' preset."
+            )
+            scale = "small"
+        configs = {
+            "tiny": dict(hidden_size=128, intermediate_size=512, num_layers=2, num_experts=4, top_k=2),
+            "small": dict(hidden_size=256, intermediate_size=1024, num_layers=4, num_experts=4, top_k=2),
+            "medium": dict(hidden_size=384, intermediate_size=1536, num_layers=6, num_experts=6, top_k=2),
+        }
+        selected = next((value for key, value in configs.items() if key in scale), configs["tiny"])
+        if engine_name == "lion":
+            selected = {**selected, "num_experts": max(2, selected["num_experts"] // 2), "top_k": 1}
+        elif engine_name == "spacebyte":
+            selected = {**selected, "vocab_size": 256}
+        return MOOE(MOOEConfig(**selected))
+
+    def generate(self, prompt: str) -> str:
+        """Generate text through the configured backend."""
+        self._compile_and_initialize()
+        if self._engine_name in CLOUD_ENGINES:
+            if not self._api_key:
+                raise FatTummyAuthenticationError(f"API key required for '{self._engine_name}'. Use ft.key(...).")
+            if self._adapter is None:
+                self._adapter = get_cloud_adapter(
+                    self._engine_name,
+                    self._api_key,
+                    model_name=self._model_type if isinstance(self._model_type, str) else None,
+                    timeout=self._timeout,
+                )
+            return self._adapter.generate(prompt)
+        if self._adapter is not None:
+            return self._adapter.generate(prompt)
+        return self._generate_native(prompt)
+
+    def _generate_native(self, prompt: str) -> str:
+        """Generate with the lightweight native model using byte-level fallback tokenization."""
+        if self._model_instance is None:
+            raise FatTummyConfigurationError("No native model is initialized.")
+        try:
+            import torch
+        except ImportError as exc:
+            raise FatTummyDependencyError("Native generation requires PyTorch. Install it with: pip install torch") from exc
+        vocab = self._model_instance.config.vocab_size
+        token_ids = [ord(char) % vocab for char in prompt] or [0]
+        input_ids = torch.tensor([token_ids], dtype=torch.long)
+        output = self._model_instance.generate(input_ids, max_new_tokens=min(self._token_limit, 32))[0].tolist()
+        return "".join(chr(token % 256) for token in output)
+
+    def chat(self) -> None:
+        """Start an interactive terminal chat session."""
         print(
-            f"FatTummy Chat session started. (Type 'exit' to quit) "
-            f"[Temp: {self._temperature} | Token Limit: {self._token_limit}]"
+            "FatTummy Chat session started. Type 'exit' to quit. "
+            f"[Engine: {self._engine_name or self._default_engine()} | Temp: {self._temperature}]"
         )
         self._compile_and_initialize()
-        
         while True:
             try:
                 user_input = input("You: ")
-                if user_input.lower() in ['exit', 'quit']:
+                if user_input.lower() in {"exit", "quit"}:
                     break
-                response = self.generate(user_input)
-                print(f"FatTummy: {response}")
+                print(f"FatTummy: {self.generate(user_input)}")
             except (KeyboardInterrupt, EOFError):
                 break
-            except Exception as e:
-                print(f"FatTummy Error: {e}")
+            except Exception as exc:
+                print(f"FatTummy Error: {exc}")
 
-    def finetune(self, epochs: int = None):
-        """Delegates to tuning trainer."""
+    def finetune(self, epochs: Optional[int] = None) -> None:
+        """Fine-tune a local Hugging Face or native model."""
         if epochs is None:
             epochs = self._epochs
+        self._compile_and_initialize()
         dataset = self._data_sources[0] if len(self._data_sources) == 1 else self._data_sources
-        if self._engine_name == "hf" and self._adapter:
-            trainer = FatTummyTrainer(self._adapter.model, dataset, epochs=epochs)
-            trainer.finetune()
-        elif self._model_instance:
-            trainer = FatTummyTrainer(self._model_instance, dataset, epochs=epochs)
-            trainer.finetune()
-        else:
-            raise ValueError("Finetuning not supported for this context (requires native model or local hf engine).")
+        if not dataset:
+            raise FatTummyConfigurationError("Fine-tuning requires a dataset. Use ft.data(...).")
 
-    def push_to_hub(self, repo_id: str):
-        """Automatically registers custom model weights to HF Hub."""
-        if self._model_instance:
-            print(f"FatTummy pushing {self._model_type} to Hugging Face Hub at {repo_id}...")
-            self._model_instance.push_to_hub(repo_id)
-        elif self._engine_name == "hf" and self._adapter:
-            print(f"FatTummy pushing fine-tuned model to Hugging Face Hub at {repo_id}...")
-            self._adapter.model.push_to_hub(repo_id)
+        if isinstance(self._adapter, HuggingFaceAdapter):
+            self._adapter._load()
+            trainer = FatTummyTrainer(
+                self._adapter.model,
+                dataset,
+                tokenizer=self._adapter.tokenizer,
+                epochs=epochs,
+            )
+        elif self._model_instance is not None:
+            trainer = FatTummyTrainer(self._model_instance, dataset, epochs=epochs)
         else:
-            raise ValueError("No local model instance available to push.")
+            raise FatTummyUnsupportedBackendError("Fine-tuning requires local hf or a native model.")
+        trainer.finetune()
+
+    def push_to_hub(self, repo_id: str) -> None:
+        """Push a Hugging Face-compatible local model to the Hub."""
+        self._compile_and_initialize()
+        target = self._model_instance
+        if isinstance(self._adapter, HuggingFaceAdapter):
+            self._adapter._load()
+            target = self._adapter.model
+        if target is None or not hasattr(target, "push_to_hub"):
+            raise FatTummyUnsupportedBackendError("This model cannot be pushed to the Hugging Face Hub.")
+        target.push_to_hub(repo_id)

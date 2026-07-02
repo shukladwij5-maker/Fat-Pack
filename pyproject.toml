@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fattummy"
-version = "0.1.5"
+version = "0.2.4"
 description = "A declarative, ultra-minimalist ML framework for zero-boilerplate hardware-agnostic inference and training."
 readme = "README.md"
 license = "GPL-3.0"
@@ -19,6 +19,24 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.optional-dependencies]
+data = ["datasets", "huggingface_hub"]
+hf = ["transformers", "torch"]
+native = ["torch"]
+train = ["torch"]
+openai = ["openai"]
+anthropic = ["anthropic"]
+gemini = ["google-genai"]
+all = [
+    "datasets",
+    "huggingface_hub",
+    "transformers",
+    "torch",
+    "openai",
+    "anthropic",
+    "google-genai",
+]
+
 [project.urls]
 Homepage = "https://github.com/shukladwij5-maker/fattummy"
 
@@ -27,6 +45,6 @@ packages = ["FatTummy"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/FatTummy",
-    "/README.md",
+    "FatTummy",
+    "README.md",
 ]

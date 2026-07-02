@@ -1,102 +1,87 @@
-import os
+"""Dependency auditing helpers.
+
+FatTummy keeps heavyweight integrations optional. The builder should never run
+``pip install`` behind the user's back; adapters raise clear dependency errors
+when a selected backend is actually used.
+"""
+
+from __future__ import annotations
+
+import importlib.util
 import sys
-import subprocess
-import importlib
+from typing import Dict, Iterable, List, Mapping
 
-MIN_PYTHON = (3, 9)
-MAX_PYTHON = (3, 13)
+MIN_PYTHON = (3, 8)
+MAX_TESTED_PYTHON = (3, 13)
+
+OPTIONAL_EXTRAS: Mapping[str, Mapping[str, str]] = {
+    "data": {"datasets": "datasets", "huggingface_hub": "huggingface_hub"},
+    "hf": {"transformers": "transformers", "torch": "torch"},
+    "ollama": {},
+    "openai": {"openai": "openai"},
+    "anthropic": {"anthropic": "anthropic"},
+    "gemini": {"google-genai": "google.genai"},
+    "native": {"torch": "torch"},
+    "train": {"torch": "torch"},
+}
 
 
-def _check_python_version():
+def _check_python_version() -> None:
+    """Validate the interpreter version and print non-fatal compatibility notes."""
     if sys.version_info < MIN_PYTHON:
-        print(f"FatTummy requires Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer.")
-    elif sys.version_info > MAX_PYTHON:
-        print(
-            f"FatTummy Warning: Python {sys.version_info.major}.{sys.version_info.minor} "
-            f"is not fully supported by PyTorch."
+        raise RuntimeError(
+            f"FatTummy requires Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer."
         )
-        print("  For Make Model / Fine-tune, install Python 3.11 or 3.12:")
-        print("  https://www.python.org/downloads/")
-        print("  API Chat may still work without PyTorch.\n")
+    if sys.version_info[:2] > MAX_TESTED_PYTHON:
+        print(
+            "FatTummy warning: this Python version is newer than the latest "
+            "tested PyTorch runtime."
+        )
 
 
-def _is_package_installed(package_name):
-    try:
-        importlib.import_module(package_name)
-        return True
-    except ImportError:
-        return False
+def is_package_installed(import_name: str) -> bool:
+    """Return True when an importable package/module is available."""
+    return importlib.util.find_spec(import_name) is not None
 
 
-def _install_package(package_str, extra_args=None):
-    cmd = [sys.executable, "-m", "pip", "install", package_str]
-    if extra_args:
-        cmd.extend(extra_args)
-    try:
-        print(f"  Installing {package_str}...")
-        subprocess.check_call(cmd)
-    except subprocess.CalledProcessError as e:
-        print(f"  Failed to install {package_str}: {e}")
+def missing_dependencies(extras: Iterable[str]) -> Dict[str, List[str]]:
+    """Return missing pip packages grouped by requested optional extra."""
+    missing: Dict[str, List[str]] = {}
+    for extra in extras:
+        required = OPTIONAL_EXTRAS.get(extra, {})
+        absent = [pip_name for pip_name, import_name in required.items() if not is_package_installed(import_name)]
+        if absent:
+            missing[extra] = absent
+    return missing
 
 
-def _install_dependencies(packages):
-    for dep in packages:
-        pkg_name = "google.genai" if dep == "google-genai" else dep
-        if not _is_package_installed(pkg_name):
-            _install_package(dep)
+def format_install_hint(extras: Iterable[str]) -> str:
+    """Build a concise pip hint for missing optional extras."""
+    missing = missing_dependencies(extras)
+    packages = sorted({pkg for group in missing.values() for pkg in group})
+    if not packages:
+        return ""
+    return "Install optional dependencies with: pip install " + " ".join(packages)
 
 
-def ensure_api_deps():
-    """Install cloud API packages only (no PyTorch)."""
+def ensure_api_deps() -> None:
+    """Audit cloud API dependencies without installing them."""
     _check_python_version()
-    _install_dependencies(["openai", "google-genai", "anthropic"])
+    hint = format_install_hint(["openai", "anthropic", "gemini"])
+    if hint:
+        print(f"FatTummy optional API dependencies missing. {hint}")
 
 
-def detect_hardware_and_install():
-    """
-    Intelligent runtime environment checker.
-    Installs torch_xla on TPU, PyTorch cu121 on GPU, and manages dependencies.
-    """
+def detect_hardware_and_install() -> None:
+    """Audit local dependency availability without mutating the environment."""
     _check_python_version()
-    dependencies = [
-        "transformers",
-        "datasets",
-        "pandas",
-        "huggingface_hub",
-        "openai",
-        "google-genai",
-        "anthropic",
-    ]
-    _install_dependencies(dependencies)
-
-    is_tpu = "TPU_NAME" in os.environ or "XRT_TPU_CONFIG" in os.environ
-    is_gpu = False
-    try:
-        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT)
-        is_gpu = True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-
-    if is_tpu:
-        if not _is_package_installed("torch_xla"):
-            print("  FatTummy detected TPU VM. Installing torch_xla...")
-            _install_package("torch~=2.2.0", ["-f", "https://storage.googleapis.com/libtpu-releases/index.html"])
-            _install_package("torch_xla[tpu]~=2.2.0", ["-f", "https://storage.googleapis.com/libtpu-releases/index.html"])
-    elif is_gpu:
-        if not _is_package_installed("torch"):
-            print("  FatTummy detected NVIDIA GPU. Installing PyTorch...")
-            _install_package("torch", ["--index-url", "https://download.pytorch.org/whl/cu121"])
-    else:
-        if not _is_package_installed("torch"):
-            print("  FatTummy detected CPU. Installing PyTorch...")
-            _install_package("torch")
-
-    if not _is_package_installed("torch"):
-        print("  Warning: PyTorch is not available. Make Model and Fine-tune will not work.")
+    hint = format_install_hint(["data", "hf", "native", "train", "openai", "anthropic", "gemini"])
+    if hint:
+        print(f"FatTummy optional dependencies missing. {hint}")
 
 
-def ensure_installed(api_only=False):
-    """Entry point for the FatTummy builder to lazily audit the environment."""
+def ensure_installed(api_only: bool = False) -> None:
+    """Audit environment readiness for the builder."""
     if api_only:
         ensure_api_deps()
     else:
