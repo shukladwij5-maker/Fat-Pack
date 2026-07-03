@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="fattummy",
-    version="0.2.3",
+    version="0.2.6",
     author="Origin-Labs",
     author_email="Shukladwij5@gmail.com",
     description="A declarative, ultra-minimalist ML framework for zero-boilerplate hardware-agnostic inference and training.",

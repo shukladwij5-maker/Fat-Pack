@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Sequence
 
 from .exceptions import (
     FatTummyAuthenticationError,
@@ -13,6 +13,7 @@ from .exceptions import (
 from .inference.cloud_adapters import get_cloud_adapter
 from .inference.local_adapters import HuggingFaceAdapter, get_local_adapter
 from .installer import ensure_installed
+from .predictor import predict
 from .tuning.trainer import FatTummyTrainer
 
 CLOUD_ENGINES = {"openai", "anthropic", "claude", "gemini", "google"}
@@ -38,6 +39,14 @@ class FatTummyEngine:
         self._epochs = 3
         self._timeout = 120.0
         self._quantization: Optional[str] = None
+
+        # Advanced training knobs
+        self._optimizer: str = "adamw"
+        self._use_spacebyte: bool = False
+        self._lr_scheduler: str = "none"
+        self._weight_decay: float = 0.01
+        self._warmup_steps: int = 0
+        self._clip_grad_norm: Optional[float] = None
 
         self._compiled = False
         self._adapter: Any = None
@@ -95,10 +104,10 @@ class FatTummyEngine:
         return self
 
     def action(self, name: str) -> "FatTummyEngine":
-        """Set the user goal: make, finetune, or api."""
+        """Set the user goal: make, finetune, api, chat, or predict."""
         normalized = name.lower().strip()
-        if normalized not in {"make", "finetune", "api", "chat"}:
-            raise FatTummyConfigurationError("Action must be one of: make, finetune, api, chat.")
+        if normalized not in {"make", "finetune", "api", "chat", "predict"}:
+            raise FatTummyConfigurationError("Action must be one of: make, finetune, api, chat, predict.")
         self._action = normalized
         return self
 
@@ -134,6 +143,44 @@ class FatTummyEngine:
         """Set the quantization mode for local Hugging Face models (e.g. '4bit' or '8bit')."""
         self._quantization = mode
         self._compiled = False
+        return self
+
+    def optimizer(self, name: str) -> "FatTummyEngine":
+        """Choose the training optimizer: 'adamw' (default) or 'lion' (auto-installed)."""
+        normalized = name.lower().strip()
+        if normalized not in {"adamw", "lion"}:
+            from .exceptions import FatTummyConfigurationError
+            raise FatTummyConfigurationError("optimizer must be 'adamw' or 'lion'.")
+        self._optimizer = normalized
+        return self
+
+    def spacebyte(self, enabled: bool = True) -> "FatTummyEngine":
+        """Enable SpaceByte raw UTF-8 byte tokenisation (no BPE, vocab_size=256)."""
+        self._use_spacebyte = bool(enabled)
+        return self
+
+    def lr_scheduler(self, name: str) -> "FatTummyEngine":
+        """Set LR scheduler: 'cosine', 'linear', or 'none' (default)."""
+        normalized = name.lower().strip()
+        if normalized not in {"cosine", "linear", "none"}:
+            from .exceptions import FatTummyConfigurationError
+            raise FatTummyConfigurationError("lr_scheduler must be 'cosine', 'linear', or 'none'.")
+        self._lr_scheduler = normalized
+        return self
+
+    def weight_decay(self, value: float) -> "FatTummyEngine":
+        """Set L2 weight decay coefficient (default 0.01)."""
+        self._weight_decay = float(value)
+        return self
+
+    def warmup(self, steps: int) -> "FatTummyEngine":
+        """Set the number of linear warmup optimiser steps (default 0)."""
+        self._warmup_steps = max(0, int(steps))
+        return self
+
+    def clip_grad(self, max_norm: float) -> "FatTummyEngine":
+        """Clip gradient norm during training (e.g. 1.0). Pass 0 to disable."""
+        self._clip_grad_norm = float(max_norm) if max_norm > 0 else None
         return self
 
     def _default_engine(self) -> str:
@@ -211,6 +258,12 @@ class FatTummyEngine:
             selected = {**selected, "vocab_size": 256}
         return MOOE(MOOEConfig(**selected))
 
+    def predict(self, values: Sequence[float], steps: int = 1) -> List[float]:
+        """Predict future values from a numeric time series using the adaptive forecasting stack."""
+        if steps < 0:
+            raise FatTummyConfigurationError("steps must be non-negative.")
+        return predict(list(values), steps=steps)
+
     def generate(self, prompt: str) -> str:
         """Generate text through the configured backend."""
         self._compile_and_initialize()
@@ -266,9 +319,9 @@ class FatTummyEngine:
         if epochs is None:
             epochs = self._epochs
         self._compile_and_initialize()
-        dataset = self._data_sources[0] if len(self._data_sources) == 1 else self._data_sources
-        if not dataset:
+        if not self._data_sources:
             raise FatTummyConfigurationError("Fine-tuning requires a dataset. Use ft.data(...).")
+        dataset = self._data_sources[0] if len(self._data_sources) == 1 else self._data_sources
 
         if isinstance(self._adapter, HuggingFaceAdapter):
             self._adapter._load()
@@ -277,9 +330,25 @@ class FatTummyEngine:
                 dataset,
                 tokenizer=self._adapter.tokenizer,
                 epochs=epochs,
+                optimizer=self._optimizer,
+                use_spacebyte=self._use_spacebyte,
+                lr_scheduler=self._lr_scheduler,
+                weight_decay=self._weight_decay,
+                warmup_steps=self._warmup_steps,
+                clip_grad_norm=self._clip_grad_norm,
             )
         elif self._model_instance is not None:
-            trainer = FatTummyTrainer(self._model_instance, dataset, epochs=epochs)
+            trainer = FatTummyTrainer(
+                self._model_instance,
+                dataset,
+                epochs=epochs,
+                optimizer=self._optimizer,
+                use_spacebyte=self._use_spacebyte,
+                lr_scheduler=self._lr_scheduler,
+                weight_decay=self._weight_decay,
+                warmup_steps=self._warmup_steps,
+                clip_grad_norm=self._clip_grad_norm,
+            )
         else:
             raise FatTummyUnsupportedBackendError("Fine-tuning requires local hf or a native model.")
         trainer.finetune()

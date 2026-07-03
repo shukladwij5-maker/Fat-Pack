@@ -6,6 +6,7 @@ import sys
 from typing import Any, Dict
 
 from .data.loader import resolve_datasets
+from .predictor import predict_csv
 
 SAMPLES = {
     "scale": "tiny",
@@ -76,7 +77,7 @@ def _build_logo() -> str:
 def collect_config() -> Dict[str, Any]:
     """Collect wizard configuration from terminal prompts."""
     _print_logo()
-    print("FatTummy 0.2.3")
+    print("FatTummy 0.2.6")
     print("  a = Adv     Full control")
     print("  b = Breeze  Minimal prompts")
     mode = input("Choose mode [b]: ").strip().lower()
@@ -141,11 +142,14 @@ def _choose_action() -> str:
     print("  1 = Make Model")
     print("  2 = Fine-tune")
     print("  3 = API Chat")
+    print("  4 = Predict from CSV")
     choice = input("Choose [1]: ").strip().lower()
     if choice in {"2", "finetune", "fine-tune", "train"}:
         return "finetune"
     if choice in {"3", "api", "chat"}:
         return "api"
+    if choice in {"4", "predict", "csv"}:
+        return "predict"
     return "make"
 
 
@@ -178,9 +182,30 @@ def _collect_for_action(action: str) -> Dict[str, Any]:
         config["engine"] = engine.lower()
         config["type"] = engine.lower()
         config["datasets_raw"] = _prompt("Dataset (optional)", "")
+    elif action == "predict":
+        csv_path = _prompt("CSV file path", "")
+        if csv_path:
+            config["csv_path"] = csv_path
+            config["target_column"] = _prompt("Target column", "")
+            config["date_column"] = _prompt("Date column (optional)", "")
+            config["steps"] = _prompt("Forecast steps", "1")
+        else:
+            config["csv_path"] = ""
+            config["target_column"] = ""
+            config["date_column"] = ""
+            config["steps"] = "1"
     elif action == "finetune":
-        config["engine"] = "hf"
-        config["type"] = _prompt("HF model", SAMPLES["hf_model"])
+        model_choice = _prompt("Model type (hf/mooe/lion/spacebyte)", SAMPLES["engine"])
+        normalized = model_choice.lower().strip()
+        if normalized in NATIVE_CHOICES:
+            config["engine"] = normalized
+            config["type"] = normalized
+        else:
+            config["engine"] = "hf"
+            if normalized == "hf":
+                config["type"] = _prompt("HF model name", SAMPLES["hf_model"])
+            else:
+                config["type"] = model_choice
         config["datasets_raw"] = _prompt("Dataset", required=True)
     else:
         config["engine"] = _resolve_api_provider(_prompt("API provider", SAMPLES["api_provider"]))
@@ -201,6 +226,13 @@ def _run_advanced() -> Dict[str, Any]:
     # Advanced-only knobs — these are missing from Breeze mode
     config["quantize"] = _prompt("Quantization (4bit/8bit/blank to skip)", "")
     config["timeout"] = _prompt("Request timeout in seconds", "120")
+    config["optimizer"] = _prompt("Optimizer (adamw/lion)", "adamw")
+    spacebyte_input = _prompt("Use SpaceByte encoding? (y/n)", "n")
+    config["use_spacebyte"] = spacebyte_input.lower().startswith("y")
+    config["lr_scheduler"] = _prompt("LR Scheduler (none/cosine/linear)", "none")
+    config["weight_decay"] = _prompt("Weight decay", "0.01")
+    config["warmup_steps"] = _prompt("Warmup steps", "0")
+    config["clip_grad_norm"] = _prompt("Gradient clipping max norm (0 to disable)", "0")
     return config
 
 
@@ -219,6 +251,18 @@ def _apply_config(engine: Any, config: Dict[str, Any]) -> None:
         engine.quantize(config["quantize"])
     if config.get("timeout"):
         engine.timeout(float(config["timeout"]))
+    if config.get("optimizer"):
+        engine.optimizer(config["optimizer"])
+    if "use_spacebyte" in config:
+        engine.spacebyte(config["use_spacebyte"])
+    if config.get("lr_scheduler"):
+        engine.lr_scheduler(config["lr_scheduler"])
+    if config.get("weight_decay"):
+        engine.weight_decay(float(config["weight_decay"]))
+    if config.get("warmup_steps"):
+        engine.warmup(int(config["warmup_steps"]))
+    if config.get("clip_grad_norm"):
+        engine.clip_grad(float(config["clip_grad_norm"]))
 
     raw_datasets = config.get("datasets_raw", "")
     if raw_datasets:
@@ -246,6 +290,17 @@ def _run_action(engine: Any, config: Dict[str, Any]) -> None:
     if config.get("dataset_modes"):
         print(f"Datasets loaded via: {', '.join(config['dataset_modes'])}")
     action = config["action"]
+    if action == "predict":
+        csv_path = config.get("csv_path", "")
+        target_column = config.get("target_column", "") or None
+        date_column = config.get("date_column", "") or None
+        steps = int(config.get("steps", "1") or 1)
+        if not csv_path:
+            raise ValueError("CSV prediction requires a file path.")
+        result = predict_csv(csv_path, target_column=target_column, steps=steps, date_column=date_column)
+        print("Prediction result:")
+        print(result)
+        return
     if action == "finetune":
         engine.finetune()
         # After fine-tuning, drop into chat only if the user wants it

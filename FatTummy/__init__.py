@@ -1,6 +1,6 @@
 # Global singleton engine instance
 _default_engine = None
-__version__ = "0.2.3"
+__version__ = "0.2.6"
 
 
 def _restore_public_api():
@@ -12,11 +12,19 @@ def _restore_public_api():
     globals()["temp"] = _temp_func
     globals()["chat"] = _chat_func
     globals()["generate"] = _generate_func
+    globals()["predict"] = _predict_func
+    globals()["predict_csv"] = _predict_csv_func
     globals()["finetune"] = _finetune_func
     globals()["engine"] = _engine_func
     globals()["key"] = _key_func
     globals()["hf_login"] = _hf_login_func
     globals()["quantize"] = _quantize_func
+    globals()["optimizer"] = _optimizer_func
+    globals()["spacebyte"] = _spacebyte_func
+    globals()["lr_scheduler"] = _lr_scheduler_func
+    globals()["weight_decay"] = _weight_decay_func
+    globals()["warmup"] = _warmup_func
+    globals()["clip_grad"] = _clip_grad_func
 
 
 def _ensure_engine():
@@ -72,6 +80,18 @@ def _generate_func(prompt: str):
     return _ensure_engine().generate(prompt)
 
 
+def _predict_func(values, steps: int = 1):
+    """Predict future values from a numeric sequence using an adaptive forecasting strategy."""
+    from .predictor import predict
+    return predict(values, steps=steps)
+
+
+def _predict_csv_func(csv_path: str, target_column=None, steps: int = 1, model: str = "auto", date_column=None):
+    """Predict future values from a CSV file using the forecasting helper."""
+    from .predictor import predict_csv
+    return predict_csv(csv_path, target_column=target_column, steps=steps, model=model, date_column=date_column)
+
+
 def _finetune_func(epochs: int = 3):
     """Starts finetuning using the globally configured settings."""
     return _ensure_engine().finetune(epochs)
@@ -97,6 +117,36 @@ def _quantize_func(mode: str):
     return _ensure_engine().quantize(mode)
 
 
+def _optimizer_func(name: str):
+    """Sets the training optimizer globally."""
+    return _ensure_engine().optimizer(name)
+
+
+def _spacebyte_func(enabled: bool = True):
+    """Enables or disables SpaceByte raw byte tokenisation globally."""
+    return _ensure_engine().spacebyte(enabled)
+
+
+def _lr_scheduler_func(name: str):
+    """Sets the learning rate scheduler globally."""
+    return _ensure_engine().lr_scheduler(name)
+
+
+def _weight_decay_func(value: float):
+    """Sets the weight decay coefficient globally."""
+    return _ensure_engine().weight_decay(value)
+
+
+def _warmup_func(steps: int):
+    """Sets the number of learning rate warmup steps globally."""
+    return _ensure_engine().warmup(steps)
+
+
+def _clip_grad_func(max_norm: float):
+    """Sets gradient clipping norm globally."""
+    return _ensure_engine().clip_grad(max_norm)
+
+
 def __getattr__(name):
     if name == "MOOE":
         from .models.mooe import MOOE
@@ -118,6 +168,12 @@ __all__ = [
     "key",
     "hf_login",
     "quantize",
+    "optimizer",
+    "spacebyte",
+    "lr_scheduler",
+    "weight_decay",
+    "warmup",
+    "clip_grad",
     "MOOE",
     "__version__",
 ]
