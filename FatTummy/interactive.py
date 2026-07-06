@@ -77,7 +77,7 @@ def _build_logo() -> str:
 def collect_config() -> Dict[str, Any]:
     """Collect wizard configuration from terminal prompts."""
     _print_logo()
-    print("FatTummy 0.2.6")
+    print("FatTummy 0.2.7")
     print("  a = Adv     Full control")
     print("  b = Breeze  Minimal prompts")
     mode = input("Choose mode [b]: ").strip().lower()

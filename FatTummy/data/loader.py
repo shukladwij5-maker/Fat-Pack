@@ -14,6 +14,16 @@ SUPPORTED_LOCAL_EXTENSIONS = {".json", ".jsonl", ".csv", ".txt"}
 HF_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
+def _normalize_hf_token(token: Optional[str]) -> Optional[str]:
+    """Return a cleaned Hugging Face token or None when the input is blank."""
+    if token is None:
+        return None
+    if not isinstance(token, str):
+        token = str(token)
+    token = token.strip()
+    return token or None
+
+
 def _split_sources(raw_sources: Any) -> List[str]:
     """Normalize comma-separated strings, paths, and source sequences."""
     if raw_sources is None:
@@ -98,8 +108,9 @@ def _hf_dataset_size_bytes(repo_id: str, token: Optional[str] = None) -> Optiona
             "Install it with: pip install huggingface_hub"
         ) from exc
 
+    normalized_token = _normalize_hf_token(token)
     try:
-        info = HfApi(token=token).dataset_info(repo_id)
+        info = HfApi(token=normalized_token).dataset_info(repo_id)
     except Exception as exc:
         raise FatTummyNetworkError("huggingface_dataset_info", original_error=exc) from exc
 
@@ -127,8 +138,9 @@ def _load_local(path: Path, streaming: bool) -> Any:
 def _load_hf(repo_id: str, config: Optional[str], streaming: bool, token: Optional[str] = None) -> Any:
     """Load a Hugging Face dataset repository, optionally with a config name."""
     load_dataset = _require_datasets_package()
+    normalized_token = _normalize_hf_token(token)
     try:
-        return load_dataset(repo_id, name=config, streaming=streaming, token=token)
+        return load_dataset(repo_id, name=config, streaming=streaming, token=normalized_token)
     except Exception as exc:
         tag = f"/{config}" if config else ""
         raise FatTummyDatasetError(

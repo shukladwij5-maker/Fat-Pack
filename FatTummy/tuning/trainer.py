@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, List, Literal, Optional
 
@@ -35,38 +36,14 @@ def _resolve_amp_flag() -> bool:
 
 
 def _ensure_lion() -> Any:
-    """Return the Lion optimizer class, auto-installing lion-pytorch if needed.
-
-    We install silently and non-interactively so the user is never blocked by a
-    missing package mid-session.  The install is attempted only once per process.
-    """
+    """Return the Lion optimizer class or raise a clear dependency error."""
     try:
         from lion_pytorch import Lion  # type: ignore[import]
-        return Lion
-    except ImportError:
-        pass
-
-    print("FatTummy: Lion optimizer not found — installing lion-pytorch automatically...")
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "lion-pytorch", "--quiet"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise FatTummyDependencyError(
-            "Failed to auto-install lion-pytorch. "
-            "Run manually: pip install lion-pytorch"
-        ) from exc
-
-    try:
-        from lion_pytorch import Lion  # type: ignore[import]
-        print("FatTummy: lion-pytorch installed successfully.")
         return Lion
     except ImportError as exc:
         raise FatTummyDependencyError(
-            "lion-pytorch was installed but cannot be imported. "
-            "Restart your runtime and try again."
+            "Lion optimizer support requires the optional 'lion-pytorch' package. "
+            "Install it with: pip install lion-pytorch"
         ) from exc
 
 
@@ -192,8 +169,16 @@ class FatTummyTrainer:
             model_pt = checkpoint_dir / "model.pt"
             if model_pt.exists():
                 try:
-                    self.model.load_state_dict(torch.load(model_pt, map_location="cpu", weights_only=False))
-                    print("FatTummy: Successfully loaded native model weights.")
+                    state_dict = torch.load(model_pt, map_location="cpu", weights_only=False)
+                    if isinstance(state_dict, dict):
+                        incompatible = self.model.load_state_dict(state_dict, strict=False)
+                        if incompatible.missing_keys or incompatible.unexpected_keys:
+                            print(
+                                "FatTummy: Loaded checkpoint with missing/unexpected keys; continuing with the current model config."
+                            )
+                        print("FatTummy: Successfully loaded native model weights.")
+                    else:
+                        print("FatTummy warning: Checkpoint did not contain a state dict; skipping resume.")
                 except Exception as e:
                     print(f"FatTummy warning: Failed to load native state dict: {e}")
 
@@ -588,8 +573,10 @@ class FatTummyTrainer:
     # ------------------------------------------------------------------
 
     def _select_split(self, dataset: Any) -> Any:
-        if isinstance(dataset, dict) and "train" in dataset:
+        if isinstance(dataset, Mapping) and "train" in dataset:
             return dataset["train"]
+        if isinstance(dataset, Mapping) and "data" in dataset:
+            return dataset["data"]
         return dataset
 
     def _is_streaming_source(self, dataset: Any) -> bool:
@@ -620,34 +607,47 @@ class FatTummyTrainer:
                 yielded += 1
                 yield text
 
-        if dataset is None:
-            return
-        if isinstance(dataset, str):
-            yield from emit(dataset)
-            return
-        if isinstance(dataset, list) and dataset and not isinstance(dataset[0], dict):
-            for item in dataset:
-                yield from emit(str(item))
-                if limit is not None and yielded >= limit:
-                    return
-            return
-        iterable: Iterable[Any]
-        if isinstance(dataset, dict):
-            if "train" in dataset:
-                iterable = dataset["train"]
-            else:
-                iterable = [dataset]
-        else:
-            iterable = dataset
-        for item in iterable:
-            if isinstance(item, str):
-                yield from emit(item)
-            elif isinstance(item, dict):
-                text = item.get("text") or item.get("content") or item.get("prompt") or item.get("completion")
-                if text:
-                    yield from emit(str(text))
+        def recurse(item: Any) -> Iterator[str]:
+            nonlocal yielded
             if limit is not None and yielded >= limit:
                 return
+            if item is None:
+                return
+            if isinstance(item, str):
+                yield from emit(item)
+                return
+            if isinstance(item, bytes):
+                yield from emit(item.decode("utf-8", errors="replace"))
+                return
+            if isinstance(item, Mapping):
+                if "train" in item:
+                    yield from recurse(item["train"])
+                    return
+                if "data" in item:
+                    yield from recurse(item["data"])
+                    return
+                text = item.get("text") or item.get("content") or item.get("prompt") or item.get("completion")
+                if text is not None:
+                    yield from emit(str(text))
+                return
+            if isinstance(item, (list, tuple)):
+                for subitem in item:
+                    if limit is not None and yielded >= limit:
+                        break
+                    yield from recurse(subitem)
+                return
+            if hasattr(item, "__iter__"):
+                try:
+                    for subitem in item:
+                        if limit is not None and yielded >= limit:
+                            break
+                        yield from recurse(subitem)
+                    return
+                except TypeError:
+                    pass
+            yield from emit(str(item))
+
+        yield from recurse(dataset)
 
 
 # ---------------------------------------------------------------------------

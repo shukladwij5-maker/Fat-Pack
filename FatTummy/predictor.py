@@ -10,20 +10,8 @@ import sys
 from typing import Any, List, Optional, Sequence
 
 
-def _install_packages(packages: Sequence[str]) -> bool:
-    """Attempt to install missing Python packages via pip."""
-    if not packages:
-        return True
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", *packages])
-        return True
-    except Exception as exc:  # pragma: no cover - depends on environment
-        print(f"FatTummy warning: failed to install optional dependencies {packages}: {exc}")
-        return False
-
-
 def ensure_predictor_dependencies() -> bool:
-    """Ensure the forecasting stack is available, installing common packages when possible."""
+    """Check whether common forecasting dependencies are available without installing them."""
     required = [
         ("numpy", "numpy"),
         ("pandas", "pandas"),
@@ -34,13 +22,7 @@ def ensure_predictor_dependencies() -> bool:
     if not missing:
         return True
 
-    package_names = {
-        "numpy": "numpy",
-        "pandas": "pandas",
-        "statsmodels": "statsmodels",
-        "sklearn": "scikit-learn",
-    }
-    return _install_packages([package_names[pkg] for pkg in missing])
+    return False
 
 
 def _coerce_numeric(values: Sequence[float]) -> List[float]:

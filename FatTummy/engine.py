@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, List, Optional, Sequence
 
 from .exceptions import (
     FatTummyAuthenticationError,
     FatTummyConfigurationError,
+    FatTummyDatasetError,
     FatTummyDependencyError,
     FatTummyUnsupportedBackendError,
 )
 from .inference.cloud_adapters import get_cloud_adapter
 from .inference.local_adapters import HuggingFaceAdapter, get_local_adapter
 from .installer import ensure_installed
+from .data import resolve_datasets
+from .data.loader import _normalize_hf_token
 from .predictor import predict
 from .tuning.trainer import FatTummyTrainer
 
@@ -73,8 +77,25 @@ class FatTummyEngine:
         return self
 
     def data(self, *sources: Any) -> "FatTummyEngine":
-        """Register one or more dataset objects or source identifiers."""
-        self._data_sources.extend(sources)
+        """Register one or more dataset objects, raw text values, or dataset source identifiers."""
+        for source in sources:
+            if isinstance(source, (str, os.PathLike)):
+                # Resolve local dataset files and Hugging Face dataset repo IDs when possible.
+                try:
+                    datasets, modes = resolve_datasets(str(source), token=self._hf_token)
+                except FatTummyDatasetError:
+                    self._data_sources.append(source)
+                else:
+                    self._dataset_modes.extend(modes)
+                    self._data_sources.extend(datasets)
+                continue
+
+            if isinstance(source, Sequence) and not isinstance(source, (str, bytes, os.PathLike)):
+                for item in source:
+                    self.data(item)
+                continue
+
+            self._data_sources.append(source)
         return self
 
     def type(self, arch: Any) -> "FatTummyEngine":
@@ -92,14 +113,15 @@ class FatTummyEngine:
 
     def hf_login(self, token: str) -> "FatTummyEngine":
         """Store a Hugging Face token and attempt a non-fatal hub login."""
-        self._hf_token = token
-        if token:
+        normalized_token = _normalize_hf_token(token)
+        self._hf_token = normalized_token
+        if normalized_token:
             try:
                 from huggingface_hub import login
             except ImportError:
                 print("FatTummy: huggingface_hub is not installed; token stored for later use.")
             else:
-                login(token=token, add_to_git_credential=False)
+                login(token=normalized_token, add_to_git_credential=False)
                 print("FatTummy: Hugging Face login successful.")
         return self
 

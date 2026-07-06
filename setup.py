@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="fattummy",
-    version="0.2.6",
+    version="0.3.1",
     author="Origin-Labs",
     author_email="Shukladwij5@gmail.com",
     description="A declarative, ultra-minimalist ML framework for zero-boilerplate hardware-agnostic inference and training.",
@@ -13,6 +13,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/shukladwij5-maker/fattummy",
     packages=find_packages(),
+    py_modules=["fattummy", "Fattummy"],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",

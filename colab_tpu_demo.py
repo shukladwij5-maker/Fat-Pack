@@ -4,13 +4,13 @@
 # Instructions:
 # 1. Open Google Colab (https://colab.research.google.com).
 # 2. Select TPU Runtime: "Runtime" -> "Change runtime type" -> Select "TPU v2" or "TPU v4".
-# 3. Upload the built wheel file ("dist/fattummy-0.2.6-py3-none-any.whl") to Colab.
+# 3. Upload the built wheel file ("dist/fattummy-0.2.7-py3-none-any.whl") to Colab.
 # 4. Copy, paste, and run the cells below.
 
 # ------------------------------------------------------------------------------
 # Cell 1: Install FatTummy and Dependencies
 # ------------------------------------------------------------------------------
-# !pip install fattummy-0.2.6-py3-none-any.whl
+# !pip install fattummy-0.2.7-py3-none-any.whl
 
 # ------------------------------------------------------------------------------
 # Cell 2: Build and Train on TPU
