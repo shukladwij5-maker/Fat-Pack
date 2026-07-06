@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fattummy"
-version = "0.2.6"
+version = "0.3.1"
 description = "A declarative, ultra-minimalist ML framework for zero-boilerplate hardware-agnostic inference and training."
 readme = "README.md"
 license = "GPL-3.0"
@@ -42,6 +42,7 @@ Homepage = "https://github.com/shukladwij5-maker/fattummy"
 
 [tool.hatch.build.targets.wheel]
 packages = ["FatTummy"]
+py-modules = ["fattummy", "Fattummy"]
 
 [tool.hatch.build.targets.sdist]
 include = [

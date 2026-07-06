@@ -1,6 +1,12 @@
+import sys
+
 # Global singleton engine instance
 _default_engine = None
-__version__ = "0.2.6"
+__version__ = "0.3.1"
+
+# Make the package available under common lowercase and mixed-case aliases.
+sys.modules.setdefault("fattummy", sys.modules[__name__])
+sys.modules.setdefault("Fattummy", sys.modules[__name__])
 
 
 def _restore_public_api():
